@@ -1,0 +1,7 @@
+# envs/msisensor.yaml
+name: msisensor-pro-1.3.0
+channels: [conda-forge, bioconda, defaults]
+dependencies:
+  - msisensor-pro=1.3.0
+  - samtools>=1.16,<2
+  - python=3.11

@@ -1,0 +1,107 @@
+# --- Snakemake: msisensor-pro workflow (auto-pair tumor/normal) ---
+from pathlib import Path
+import os, re
+
+configfile: "config/config.yaml"
+
+REF      = config["reference"]
+BAMDIR   = config["bam_dir"]
+OUTDIR   = config.get("outdir", "results")
+
+TUMTAG    = config.get("tumor_tag", "FF_TMA")
+NORTAG    = config.get("normal_tag", "PB_NOR")
+RECURSIVE = config.get("recursive", False)
+
+# Tool resolution: config > env var > PATH
+MSI = config.get("msisensor_cmd") or os.getenv("MSISENSOR_CMD") or "msisensor-pro"
+SAM = config.get("samtools_cmd")   or os.getenv("SAMTOOLS_CMD")   or "samtools"
+
+# Derive site file name from reference
+ref_stem = re.sub(r"\.(fa|fna|fasta)(\.gz)?$", "", Path(REF).name, flags=re.I)
+SITE = f"{OUTDIR}/{ref_stem}.reference.site"
+
+def find_pairs(bamdir, tumor_tag, normal_tag, recursive=False):
+    """Return dict: core_prefix -> {'tumor': path, 'normal': path}"""
+    bamdir = Path(bamdir)
+    pattern = f"**/*{tumor_tag}*.bam" if recursive else f"*{tumor_tag}*.bam"
+    tumors = sorted(p for p in bamdir.glob(pattern) if p.is_file() and not str(p).endswith(".bai"))
+    rx = re.compile(rf"^(.+?)_{re.escape(tumor_tag)}_(.+?)_S\d+.*\.bam$")
+    pairs = {}
+    for t in tumors:
+        m = rx.match(t.name)
+        if not m:
+            print(f"[WARN] skip (cannot parse tumor name): {t.name}")
+            continue
+        pre, post = m.group(1), m.group(2)
+        gp = f"{pre}_{normal_tag}_{post}_S*.bam"
+        normals = sorted(p for p in t.parent.glob(gp) if p.is_file() and not str(p).endswith(".bai"))
+        if not normals:
+            print(f"[WARN] no normal found for {t.name} (looked for {gp})")
+            continue
+        core = f"{pre}_{post}"
+        pairs[core] = {"tumor": str(t), "normal": str(normals[0])}
+    if not pairs:
+        raise ValueError("No tumor/normal pairs formed — check tags or naming.")
+    return pairs
+
+PAIRS = find_pairs(BAMDIR, TUMTAG, NORTAG, RECURSIVE)
+PREFIXES = sorted(PAIRS.keys())
+
+# -------- Targets --------
+rule all:
+    input:
+        expand(f"{OUTDIR}" + "/{prefix}_dis",      prefix=PREFIXES),
+        expand(f"{OUTDIR}" + "/{prefix}_germline", prefix=PREFIXES),
+        expand(f"{OUTDIR}" + "/{prefix}_somatic",  prefix=PREFIXES),
+        expand(f"{OUTDIR}" + "/{prefix}",          prefix=PREFIXES)
+
+# -------- Indices & site --------
+rule fasta_index:
+    input:  REF
+    output: REF + ".fai"
+    conda:  "envs/msisensor.yaml"
+    shell:  "{SAM} faidx {input}"
+
+rule msisensor_scan:
+    input:
+        ref = REF,
+        fai = REF + ".fai"
+    output:
+        SITE
+    conda:  "envs/msisensor.yaml"
+    threads: 1
+    shell:
+        """
+        mkdir -p {OUTDIR}
+        {MSI} scan -d {input.ref} -o {output}
+        """
+
+# -------- MSI per pair --------
+rule msisensor_msi:
+    input:
+        site   = SITE,
+        tumor  = lambda wc: PAIRS[wc.prefix]["tumor"],
+        normal = lambda wc: PAIRS[wc.prefix]["normal"]
+    output:
+        dis     = f"{OUTDIR}/{{prefix}}_dis",
+        germ    = f"{OUTDIR}/{{prefix}}_germline",
+        somatic = f"{OUTDIR}/{{prefix}}_somatic",
+        main    = f"{OUTDIR}/{{prefix}}"
+    conda:   "envs/msisensor.yaml"
+    threads: config.get("msi_threads", 1)
+    log:     f"logs/{{prefix}}.msi.log"
+    shell:
+        r"""
+        mkdir -p {OUTDIR}
+        # Ensure BAM indices if missing
+        [[ -f {input.tumor}.bai  ]] || {SAM} index {input.tumor}
+        [[ -f {input.normal}.bai ]] || {SAM} index {input.normal}
+
+        # Run msisensor-pro
+        {MSI} msi \
+          -d {input.site} \
+          -n {input.normal} \
+          -t {input.tumor} \
+          -o {OUTDIR}/{wildcards.prefix} \
+          &> {log}
+        """

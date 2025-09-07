@@ -1,0 +1,19 @@
+# config/config.yaml
+# Set these paths for your system
+reference: "/path/to/human_g1k_v37.fasta"
+bam_dir: "/path/to/bam_dir"
+outdir: "results"
+
+# filename tags for pairing
+tumor_tag: "FF_TMA"
+normal_tag: "PB_NOR"
+
+# search subfolders for BAMs (true/false)
+recursive: false
+
+# optional: set explicit tool paths (or use env vars)
+msisensor_cmd: null   # e.g. "/media/NAS/Softwares/msisensor-pro-v1.3.0/msisensor-pro"
+samtools_cmd: null    # e.g. "/media/NAS/Softwares/samtools-1.20/samtools"
+
+# resources
+msi_threads: 2
