@@ -1,7 +1,7 @@
 # config/config.yaml
 # Set these paths for your system
-reference: "/path/to/human_g1k_v37.fasta"
-bam_dir: "/path/to/bam_dir"
+reference: "/home/d194-admin/master-mainz/Reference_Database/MSI_GenomeFasta/"
+bam_dir: "/home/d194-admin/master-mainz/Exome/Project_358167439/Analysis/05_MSI/"
 outdir: "results"
 
 # filename tags for pairing
